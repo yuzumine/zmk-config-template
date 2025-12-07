@@ -10,10 +10,10 @@ jobs:
     name: Build PNCATEHO right
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Cache west modules
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         env:
           cache-name: cache-zephyr-modules
         with:
@@ -52,7 +52,7 @@ jobs:
         run: cp build/zephyr/zmk.uf2 PNCATEHO_right_promicro_nrf52840.uf2
 
       - name: Archive (PNCATEHO right)
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: firmware
           path: PNCATEHO_right_promicro_nrf52840.uf2
