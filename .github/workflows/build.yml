@@ -3,5 +3,97 @@ on: [push, pull_request, workflow_dispatch]
 name: Build
 
 jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    name: Fetch Build Keyboards
+    outputs:
+      build_matrix: ${{ steps.fetch-matrix.outputs.build_matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yaml2json
+        run: python3 -m pip install remarshal
+
+      - name: Fetch Build Matrix
+        id: fetch-matrix
+        run: echo "build_matrix=$(yaml2json build.yaml | jq -c .)" >> $GITHUB_OUTPUT
+
   build:
-    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main
+    runs-on: ubuntu-latest
+    container:
+      image: zmkfirmware/zmk-build-arm:stable
+    needs: matrix
+    name: Build
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}
+    steps:
+      - name: Prepare variables
+        shell: sh -x {0}
+        run: |
+          echo "zephyr_version=${ZEPHYR_VERSION}" >> $GITHUB_ENV
+          echo "extra_cmake_args=${EXTRA_CMAKE_ARGS}" >> $GITHUB_ENV
+          echo "display_name=${DISPLAY_NAME}" >> $GITHUB_ENV
+          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache west modules
+        uses: actions/cache@v4
+        continue-on-error: true
+        env:
+          cache_name: cache-zephyr-${{ env.zephyr_version }}-modules
+        with:
+          path: |
+            modules/
+            tools/
+            zephyr/
+            bootloader/
+            zmk/
+          key: ${{ runner.os }}-build-${{ env.cache_name }}-${{ hashFiles('**/west.yml', '**/build.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache_name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - name: West Init
+        run: west init -l config
+
+      - name: West Update
+        run: west update
+
+      - name: West Zephyr export
+        run: west zephyr-export
+
+      - name: West Build (${{ env.display_name }})
+        shell: sh -x {0}
+        run: west build -s zmk/app -d build/${{ env.artifact_name }} -b ${{ matrix.board }} -- -DZMK_CONFIG=${GITHUB_WORKSPACE}/config ${{ env.extra_cmake_args }} ${{ matrix.cmake-args }}
+
+      - name: ${{ env.display_name }} Kconfig file
+        run: |
+          if [ -f build/${{ env.artifact_name }}/zephyr/.config ]
+          then
+            grep -v -e "^#" -e "^$" build/${{ env.artifact_name }}/zephyr/.config | sort
+          else
+            echo "No Kconfig output"
+          fi
+
+      - name: Rename artifacts
+        shell: sh -x {0}
+        run: |
+          mkdir build/artifacts
+          if [ -f build/${{ env.artifact_name }}/zephyr/zmk.uf2 ]
+          then
+            cp build/${{ env.artifact_name }}/zephyr/zmk.uf2 "build/artifacts/${{ env.artifact_name }}.uf2"
+          elif [ -f build/${{ env.artifact_name }}/zephyr/zmk.hex ]
+          then
+            cp build/${{ env.artifact_name }}/zephyr/zmk.hex "build/artifacts/${{ env.artifact_name }}.hex"
+          fi
+
+      - name: Archive (${{ env.display_name }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: build/artifacts
